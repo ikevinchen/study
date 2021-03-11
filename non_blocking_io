@@ -1,0 +1,87 @@
+non-blocking I/O
+
+
+=============
+
+[the user] ---fwrite--> [user space buffer] ---- fflush/write -->  [kernel sapce buffer] ---fsync---> real hw device
+可能是 kernel sapce buffer 已經滿了?
+	<ref.> https://blog.csdn.net/xingcen/article/details/55506639
+		   https://www.itread01.com/content/1543722364.html
+		   https://codertw.com/%E4%BC%BA%E6%9C%8D%E5%99%A8/379326/
+		   https://stackoverflow.com/questions/30988439/long-delay-hiccups-for-logging-stdout-to-file
+		   
+		   
+But, console does not have kernel buffers.   
+	<ref.> https://stackoverflow.com/questions/26257171/flush-kernel-buffers-for-stdout/26258312
+	http://www.kegel.com/dkftpbench/nonblocking.html
+	https://www.cnblogs.com/mickole/p/3192461.html
+	
+fcntl act on STDIN will also affect on STDOUT and STDERR !!
+
+
+========================
+#include <stdio.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <signal.h>
+
+
+void sigintHandler(int sig_num) 
+{ 
+    /* Reset handler to catch SIGINT next time. 
+       Refer http://en.cppreference.com/w/c/program/signal */
+    signal(SIGINT, sigintHandler); 
+    printf("Cannot be terminated using Ctrl+C"); 
+    fflush(stdout); 
+} 
+
+int main()
+{
+  char c;
+  int count;
+  int flags;
+
+  static struct termios oldt, newt;
+  
+  
+  /*
+   *  Disable echo and buffering
+   *    ref. https://stackoverflow.com/questions/1798511/how-to-avoid-pressing-enter-with-getchar-for-reading-a-single-character-only
+   */
+  tcgetattr(0, &oldt);
+  newt = oldt;
+  newt.c_lflag &= ~(ICANON | ECHO); 
+  tcsetattr(0, TCSANOW, &newt);
+
+  /* 
+   * change read() to non-blocking mode 
+   * otherwiwe, read() will block if the user does not input
+   *  ref. https://www.geeksforgeeks.org/non-blocking-io-with-pipes-in-c/
+   */    
+  flags = fcntl(0, F_GETFL, 0);
+  if(fcntl(0, F_SETFL, flags | O_NONBLOCK)) {
+     printf("console no block setting error\n");
+     return 0;
+  }  
+  
+  /* disable OS to handle ctrl+c */
+  signal(SIGINT, sigintHandler);
+  
+  /* start the testing */
+  printf("sleep start\n");
+  fflush(stdout); 
+  sleep(3);
+  printf("sleep end\n");
+  fflush(stdout);
+  while(1) {
+    count = read(0, &c, 1);
+    if (count >= 0) break;
+  }
+  printf("count : %d, char = %d %c\n", count, c , c);
+  
+  /*
+   * restore tty setting after this program endding
+   */
+  tcsetattr(0, TCSANOW, &oldt);
+  return 0;      
+}
